@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Quét Biển Số Xe</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 12px; background: #121212; color: #fff; text-align: center; }
+    h2 { margin: 10px 0; font-size: 18px; color: #00E676; }
+    .camera-box { position: relative; width: 100%; max-height: 45vh; border-radius: 12px; overflow: hidden; border: 2px solid #00E676; background: #000; }
+    video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .scan-line { position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: #00E676; box-shadow: 0 0 8px #00E676; animation: scan 2s infinite linear; }
+    @keyframes scan { 0% { top: 0; } 50% { top: 98%; } 100% { top: 0; } }
+    .status { margin-top: 10px; font-size: 14px; font-weight: bold; color: #FFD54F; }
+    .log-box { margin-top: 12px; max-height: 160px; overflow-y: auto; text-align: left; background: #1E1E1E; padding: 10px; border-radius: 8px; border: 1px solid #333; }
+    .log-item { padding: 6px 0; border-bottom: 1px solid #2C2C2C; font-size: 13px; color: #E0E0E0; }
+    .log-item b { color: #00E676; }
+  </style>
+</head>
+<body>
+
+  <h2>HỆ THỐNG QUÉT BIỂN SỐ XE</h2>
+  <div class="camera-box">
+    <video id="video" autoplay playsinline muted></video>
+    <div class="scan-line"></div>
+  </div>
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <div class="status" id="status">Đang khởi động camera...</div>
+
+  <div class="log-box" id="logBox">
+    <div style="color: #888; font-size: 12px;">Dữ liệu quét sẽ hiện ở đây...</div>
+  </div>
+
+  <script>
+    // -------------------------------------------------------------
+    // DÁN LINK APPS SCRIPT CỦA ANH VÀO GIỮA 2 DẤU NGOẶC KÉP DƯỚI ĐÂY:
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzc0u4q6q-hqHztM4dDUnpOrC7W76NES5OOiP4XplantWX2TZ1q1lCdDlhss1JYAh-q/exec";
+    // -------------------------------------------------------------
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusText = document.getElementById('status');
+    const logBox = document.getElementById('logBox');
+
+    let scannedPlates = new Set();
+    let isProcessing = false;
+
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    }).then(stream => {
+      video.srcObject = stream;
+      statusText.innerText = "Camera sẵn sàng. Bắt đầu quét...";
+      setInterval(scanFrame, 1200);
+    }).catch(err => {
+      statusText.innerText = "Lỗi mở camera: " + err.message;
+    });
+
+    async function scanFrame() {
+      if (isProcessing || video.readyState !== 4) return;
+      isProcessing = true;
+
+      const ctx = canvas.getContext('2d');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      try {
+        const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
+        const regex = /([0-9]{2}[A-Z0-9]{1,2}[-\s\.]?[0-9]{4,5})/g;
+        const found = text.toUpperCase().match(regex);
+
+        if (found) {
+          for (let item of found) {
+            let clean = item.replace(/[^A-Z0-9]/g, '');
+            if (clean.length >= 7 && clean.length <= 9 && !scannedPlates.has(clean)) {
+              scannedPlates.add(clean);
+              statusText.innerText = "Phát hiện: " + clean;
+              pushToSheet(clean);
+            }
+          }
+        }
+      } catch (e) {
+        // bỏ qua khung hình lỗi
+      } finally {
+        isProcessing = false;
+      }
+    }
+
+    function pushToSheet(plate) {
+      fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bienSo: plate })
+      }).then(() => {
+        const row = document.createElement('div');
+        row.className = 'log-item';
+        row.innerHTML = `✔ Đã lưu: <b>${plate}</b> - <i>${new Date().toLocaleTimeString()}</i>`;
+        logBox.prepend(row);
+      });
+    }
+  </script>
+</body>
+</html>
