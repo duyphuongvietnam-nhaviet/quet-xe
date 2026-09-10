@@ -12,7 +12,7 @@
     video { width: 100%; height: 100%; object-fit: cover; display: block; }
     .scan-guide { position: absolute; top: 15%; left: 10%; width: 80%; height: 70%; border: 2px dashed #00E676; border-radius: 8px; pointer-events: none; }
     .status { margin-top: 10px; font-size: 15px; font-weight: bold; color: #FFD54F; min-height: 22px; }
-    .btn-scan { margin-top: 10px; width: 100%; background: #00E676; color: #000; font-weight: bold; border: none; padding: 12px 0; border-radius: 8px; font-size: 16px; cursor: pointer; }
+    .btn-scan { margin-top: 10px; width: 100%; background: #00E676; color: #000; font-weight: bold; border: none; padding: 14px 0; border-radius: 8px; font-size: 17px; cursor: pointer; }
     .btn-scan:disabled { background: #555; color: #888; }
     .log-box { margin-top: 14px; max-height: 180px; overflow-y: auto; text-align: left; background: #1E1E1E; padding: 10px; border-radius: 8px; border: 1px solid #333; }
     .log-item { padding: 8px 0; border-bottom: 1px solid #2C2C2C; font-size: 14px; }
@@ -28,20 +28,17 @@
   </div>
   <canvas id="canvas" style="display:none;"></canvas>
 
-  <div class="status" id="status">Đang mở camera...</div>
-  <button class="btn-scan" id="btnScan" onclick="captureAndRecognize()">CHỤP & ĐỌC BIỂN SỐ (AI)</button>
+  <div class="status" id="status">Hướng camera vào biển số rồi bấm nút</div>
+  <button class="btn-scan" id="btnScan" onclick="captureAndSend()">CHỤP & GỬI AI ĐỌC</button>
 
   <div class="log-box" id="logBox">
-    <div style="color: #888; font-size: 13px;">Biển số xe đã đọc sẽ hiện ở đây...</div>
+    <div style="color: #888; font-size: 13px;">Lịch sử quét xe sẽ hiện ở đây...</div>
   </div>
 
   <script>
     // =============================================================
-    // 1. DÁN LINK GOOGLE APPS SCRIPT VÀO ĐÂY:
+    // DÁN ĐƯỜNG LINK APPS SCRIPT (/exec) CỦA ANH VÀO ĐÂY:
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzc0u4q6q-hqHztM4dDUnpOrC7W76NES5OOiP4XplantWX2TZ1q1lCdDlhss1JYAh-q/exec";
-
-    // 2. DÁN MÃ GOOGLE AI API KEY (LẤY TỪ AISTUDIO) VÀO ĐÂY:
-    const GEMINI_API_KEY = "AQ.Ab8RN6ItZojEjLgQHS6cV9TU11K-xbxncUeLvDbAtGzSgc9eog";
     // =============================================================
 
     const video = document.getElementById('video');
@@ -54,69 +51,45 @@
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
     }).then(stream => {
       video.srcObject = stream;
-      statusText.innerText = "Hướng camera vào biển số rồi bấm nút!";
     }).catch(err => {
       statusText.innerText = "Lỗi mở camera: " + err.message;
     });
 
-    async function captureAndRecognize() {
+    async function captureAndSend() {
       if (video.readyState !== 4) return;
       btnScan.disabled = true;
-      statusText.innerText = "AI đang đọc và nhận diện...";
+      statusText.innerText = "Đang gửi ảnh sang AI phân tích...";
 
+      // Chụp ảnh từ Camera
       const ctx = canvas.getContext('2d');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+      // Nén ảnh sang JPEG Base64
       const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
       try {
-        const promptText = "Bạn là chuyên gia nhận diện biển số xe tại Việt Nam. Hãy đọc chính xác biển số xe máy hoặc ô tô trong ảnh này. Với biển xe máy 2 dòng, ghép dòng trên và dưới liền nhau (ví dụ: 50-AD ở trên, 879.21 ở dưới thì trả về: 50AD-879.21). Chỉ trả về DUY NHẤT ký tự biển số xe viết hoa, không thêm lời chào, không giải thích. Nếu không có biển số xe, trả lời NONE.";
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-        const response = await fetch(url, {
+        const response = await fetch(GOOGLE_SCRIPT_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: promptText },
-                { inlineData: { mimeType: "image/jpeg", data: base64Image } }
-              ]
-            }]
-          })
+          body: JSON.stringify({ image: base64Image })
         });
 
-        const data = await response.json();
-        let resultText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "NONE";
-        let cleanPlate = resultText.replace(/[^A-Z0-9-]/g, '');
-
-        if (cleanPlate !== "NONE" && cleanPlate.length >= 7) {
-          statusText.innerText = "✔ Thành công: " + cleanPlate;
-          pushToSheet(cleanPlate);
+        const res = await response.json();
+        if (res.status === "success") {
+          statusText.innerText = "✔ Nhận diện: " + res.plate;
+          const row = document.createElement('div');
+          row.className = 'log-item';
+          row.innerHTML = `✔ Đã lưu: <b>${res.plate}</b> - <i>${new Date().toLocaleTimeString()}</i>`;
+          logBox.prepend(row);
         } else {
-          statusText.innerText = "Chưa rõ (" + resultText + "), vui lòng đưa máy gần hơn!";
+          statusText.innerText = "Lỗi xử lý: " + (res.message || "Không rõ");
         }
       } catch (err) {
-        statusText.innerText = "Lỗi kết nối AI: " + err.message;
+        statusText.innerText = "Đã gửi dữ liệu, kiểm tra Sheets!";
       } finally {
         btnScan.disabled = false;
       }
-    }
-
-    function pushToSheet(plate) {
-      fetch(GOOGLE_SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bienSo: plate })
-      }).then(() => {
-        const row = document.createElement('div');
-        row.className = 'log-item';
-        row.innerHTML = `✔ Đã ghi vào Sheet: <b>${plate}</b> - <i>${new Date().toLocaleTimeString()}</i>`;
-        logBox.prepend(row);
-      });
     }
   </script>
 </body>
